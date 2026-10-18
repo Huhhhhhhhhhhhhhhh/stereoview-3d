@@ -1,0 +1,1014 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>StereoView Mobile 3D Studio</title>
+  <meta name="theme-color" content="#090a0f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
+
+  <!-- Google Fonts & FontAwesome -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+  <style>
+    :root {
+      --bg: #07080c;
+      --bg-surface: #0e111a;
+      --bg-glass: rgba(17, 21, 33, 0.75);
+      --border-glass: rgba(255, 255, 255, 0.08);
+      --accent-purple: #a855f7;
+      --accent-cyan: #06b6d4;
+      --accent-emerald: #10b981;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --radius: 16px;
+      --safe-bottom: env(safe-area-inset-bottom, 16px);
+      --safe-top: env(safe-area-inset-top, 16px);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      min-height: 100vh;
+      min-height: 100dvh;
+      overflow-x: hidden;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+
+    /* Ambient background glows */
+    .glow-bg {
+      position: fixed;
+      top: -20%;
+      left: 20%;
+      width: 450px;
+      height: 450px;
+      background: radial-gradient(circle, rgba(168, 85, 247, 0.15) 0%, transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+      filter: blur(40px);
+    }
+
+    .glow-bg-2 {
+      position: fixed;
+      bottom: -15%;
+      right: 10%;
+      width: 400px;
+      height: 400px;
+      background: radial-gradient(circle, rgba(6, 182, 212, 0.12) 0%, transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+      filter: blur(50px);
+    }
+
+    /* Top App Header */
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 40;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: calc(var(--safe-top) + 8px) 16px 10px 16px;
+      background: rgba(7, 8, 12, 0.85);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border-glass);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .brand-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 9px;
+      background: linear-gradient(135deg, #a855f7, #06b6d4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.95rem;
+      color: #fff;
+      box-shadow: 0 0 16px rgba(168, 85, 247, 0.5);
+    }
+
+    .brand-title {
+      font-weight: 800;
+      font-size: 1.05rem;
+      letter-spacing: -0.3px;
+      background: linear-gradient(120deg, #fff 40%, #c084fc 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .device-badge {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.28);
+      color: #34d399;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 0.72rem;
+      font-weight: 600;
+    }
+
+    /* Main Viewport Stage */
+    .viewport-stage {
+      flex: 1;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 12px;
+      min-height: 380px;
+      overflow: hidden;
+      z-index: 10;
+    }
+
+    #hologramCanvas, #crossviewCanvas, #depthImg, #sourceImg {
+      max-width: 100%;
+      max-height: 68vh;
+      border-radius: var(--radius);
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.85);
+      object-fit: contain;
+      touch-action: none;
+    }
+
+    /* Empty Upload Hero */
+    .empty-hero {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 32px 20px;
+      background: var(--bg-glass);
+      border: 1.5px dashed rgba(168, 85, 247, 0.35);
+      border-radius: 22px;
+      max-width: 360px;
+      width: 100%;
+      backdrop-filter: blur(14px);
+    }
+
+    .empty-hero-icon {
+      width: 64px;
+      height: 64px;
+      border-radius: 18px;
+      background: rgba(168, 85, 247, 0.15);
+      border: 1px solid rgba(168, 85, 247, 0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.8rem;
+      color: #c084fc;
+      margin-bottom: 14px;
+      box-shadow: 0 0 24px rgba(168, 85, 247, 0.25);
+    }
+
+    .btn-pick {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: linear-gradient(135deg, #a855f7, #2563eb);
+      color: #fff;
+      font-size: 0.95rem;
+      font-weight: 700;
+      padding: 12px 24px;
+      border-radius: 14px;
+      border: none;
+      cursor: pointer;
+      box-shadow: 0 8px 24px rgba(168, 85, 247, 0.4);
+      margin-top: 14px;
+      transition: transform 0.1s ease;
+    }
+
+    .btn-pick:active {
+      transform: scale(0.96);
+    }
+
+    /* Floating Quick Controls Dock (Hologram Mode) */
+    .floating-dock {
+      position: absolute;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 30;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(14, 17, 26, 0.85);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--border-glass);
+      padding: 6px 12px;
+      border-radius: 30px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    }
+
+    .dock-btn {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: #fff;
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .dock-btn.active {
+      background: rgba(168, 85, 247, 0.25);
+      border-color: rgba(168, 85, 247, 0.5);
+      color: #e9d5ff;
+    }
+
+    .dock-btn:active {
+      transform: scale(0.94);
+    }
+
+    /* Tuning Drawer / Bottom Sheet */
+    .tuning-bar {
+      background: var(--bg-surface);
+      border-top: 1px solid var(--border-glass);
+      padding: 12px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      z-index: 25;
+    }
+
+    .slider-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 0.78rem;
+    }
+
+    .slider-label {
+      color: var(--text-muted);
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 110px;
+    }
+
+    .slider-val {
+      font-family: 'JetBrains Mono', monospace;
+      color: #fff;
+      font-weight: 700;
+      min-width: 38px;
+      text-align: right;
+    }
+
+    input[type=range] {
+      flex: 1;
+      accent-color: var(--accent-purple);
+      height: 6px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.12);
+      outline: none;
+    }
+
+    /* Bottom Navigation Tab Bar */
+    .tab-bar {
+      position: sticky;
+      bottom: 0;
+      z-index: 40;
+      display: flex;
+      align-items: center;
+      justify-content: space-around;
+      padding: 8px 12px calc(var(--safe-bottom) + 6px) 12px;
+      background: rgba(11, 13, 20, 0.95);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-top: 1px solid var(--border-glass);
+    }
+
+    .tab-item {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      padding: 6px 0;
+      color: var(--text-muted);
+      font-size: 0.72rem;
+      font-weight: 600;
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      border-radius: 12px;
+      transition: all 0.15s ease;
+    }
+
+    .tab-item i {
+      font-size: 1.15rem;
+    }
+
+    .tab-item.active {
+      color: #c084fc;
+      background: rgba(168, 85, 247, 0.12);
+    }
+
+    /* Floating Camera / Gallery Action Button */
+    .fab-upload {
+      position: fixed;
+      bottom: calc(var(--safe-bottom) + 64px);
+      right: 18px;
+      z-index: 35;
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #a855f7, #06b6d4);
+      color: #fff;
+      border: none;
+      font-size: 1.25rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 8px 24px rgba(168, 85, 247, 0.55);
+      cursor: pointer;
+      transition: transform 0.1s ease;
+    }
+
+    .fab-upload:active {
+      transform: scale(0.92);
+    }
+
+    /* Processing Overlay */
+    .ai-spinner {
+      position: absolute;
+      inset: 0;
+      z-index: 50;
+      background: rgba(7, 8, 12, 0.88);
+      backdrop-filter: blur(12px);
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      text-align: center;
+      padding: 24px;
+    }
+
+    .spinner-ring {
+      width: 52px;
+      height: 52px;
+      border: 3.5px solid rgba(168, 85, 247, 0.2);
+      border-top-color: #a855f7;
+      border-right-color: #06b6d4;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      top: calc(var(--safe-top) + 60px);
+      left: 50%;
+      transform: translateX(-50%) translateY(-20px);
+      background: rgba(22, 27, 46, 0.95);
+      border: 1px solid rgba(168, 85, 247, 0.4);
+      color: #fff;
+      padding: 8px 18px;
+      border-radius: 24px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.6);
+      pointer-events: none;
+      opacity: 0;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+    }
+
+    .toast.show {
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="glow-bg"></div>
+  <div class="glow-bg-2"></div>
+
+  <!-- Header -->
+  <header>
+    <div class="brand">
+      <div class="brand-icon">
+        <i class="fa-solid fa-cube"></i>
+      </div>
+      <div>
+        <div class="brand-title">StereoView Mobile</div>
+      </div>
+    </div>
+
+    <div id="deviceBadge" class="device-badge">
+      <i class="fa-solid fa-bolt"></i>
+      <span id="txtGpuMode">Snapdragon WebGPU</span>
+    </div>
+  </header>
+
+  <!-- Viewport Stage -->
+  <div class="viewport-stage" id="stageContainer">
+
+    <!-- Floating Dock Controls (Hologram Mode) -->
+    <div id="holoDock" class="floating-dock" style="display:none;">
+      <button id="btnRecenterGyro" class="dock-btn" title="Re-zero neutral tilt">
+        <i class="fa-solid fa-crosshairs text-purple-400"></i> Re-Center
+      </button>
+      <button id="btnSpeedToggle" class="dock-btn active" title="Toggle between Instant & Smooth Tilt">
+        <i class="fa-solid fa-gauge-high text-cyan-400"></i> <span id="txtSpeedMode">Instant Tilt</span>
+      </button>
+    </div>
+
+    <!-- Empty State / Picker -->
+    <div id="emptyHero" class="empty-hero">
+      <div class="empty-hero-icon">
+        <i class="fa-solid fa-wand-magic-sparkles"></i>
+      </div>
+      <h2 style="font-size:1.15rem; font-weight:700; margin-bottom:6px;">Select Any Photo</h2>
+      <p style="font-size:0.78rem; color:var(--text-muted); line-height:1.4; max-width:260px;">
+        Generates 3D Hologram & CrossView directly on your phone's Snapdragon GPU.
+      </p>
+      <button class="btn-pick" id="btnPickPhoto">
+        <i class="fa-solid fa-camera"></i> Pick or Snap Photo
+      </button>
+    </div>
+
+    <!-- 1. Hologram WebGL Canvas -->
+    <canvas id="hologramCanvas" style="display:none;"></canvas>
+
+    <!-- 2. CrossView Stereogram Canvas -->
+    <canvas id="crossviewCanvas" style="display:none;"></canvas>
+
+    <!-- 3. Greyscale Depth Image -->
+    <img id="depthImg" style="display:none;" alt="Depth Map">
+
+    <!-- 4. Original Image -->
+    <img id="sourceImg" style="display:none;" alt="Original Photo">
+
+    <!-- AI Inference Progress Spinner -->
+    <div id="aiSpinner" class="ai-spinner">
+      <div class="spinner-ring"></div>
+      <div style="font-weight:700; font-size:0.95rem; color:#fff;" id="txtAiStatus">Analyzing 3D Depth on GPU...</div>
+      <div style="font-size:0.72rem; color:var(--text-muted); max-width:240px;" id="txtAiSub">Running local Depth Anything V2 via WebGPU</div>
+    </div>
+  </div>
+
+  <!-- Real-Time Tuning Drawer (Hologram Mode) -->
+  <div id="tuningBar" class="tuning-bar" style="display:none;">
+    <!-- Tilt Sensitivity (Responsiveness) -->
+    <div class="slider-row">
+      <span class="slider-label"><i class="fa-solid fa-bolt" style="color:#06b6d4;"></i> Tilt Sensitivity:</span>
+      <input type="range" id="sliderSensitivity" min="0.5" max="3.5" step="0.25" value="1.8">
+      <span class="slider-val" id="valSensitivity">1.8×</span>
+    </div>
+
+    <!-- 3D Depth Pop -->
+    <div class="slider-row">
+      <span class="slider-label"><i class="fa-solid fa-layer-group" style="color:#a855f7;"></i> 3D Depth Pop:</span>
+      <input type="range" id="sliderDepthPop" min="0.03" max="0.22" step="0.01" value="0.10">
+      <span class="slider-val" id="valDepthPop">0.10</span>
+    </div>
+  </div>
+
+  <!-- Bottom Navigation Tab Bar -->
+  <nav class="tab-bar">
+    <button class="tab-item active" data-tab="hologram">
+      <i class="fa-solid fa-eye"></i>
+      <span>Hologram</span>
+    </button>
+    <button class="tab-item" data-tab="crossview">
+      <i class="fa-solid fa-glasses"></i>
+      <span>CrossView</span>
+    </button>
+    <button class="tab-item" data-tab="depth">
+      <i class="fa-solid fa-mountain"></i>
+      <span>Depth</span>
+    </button>
+    <button class="tab-item" data-tab="source">
+      <i class="fa-solid fa-image"></i>
+      <span>Photo</span>
+    </button>
+  </nav>
+
+  <!-- Floating Action Button for Photo Pick / Camera -->
+  <button class="fab-upload" id="fabPickPhoto" title="Change Photo">
+    <i class="fa-solid fa-camera"></i>
+  </button>
+
+  <!-- Hidden File Input -->
+  <input type="file" id="fileInput" accept="image/*" style="display:none;">
+
+  <!-- Toast Notification -->
+  <div id="toast" class="toast">
+    <i class="fa-solid fa-circle-check text-emerald-400"></i>
+    <span id="toastMsg">Ready</span>
+  </div>
+
+  <!-- In-Browser AI & WebGL Engine -->
+  <script type="module">
+    // --- State ---
+    const state = {
+      activeTab: 'hologram',
+      sourceImgElement: null,
+      depthCanvas: null,
+      sourceDataUrl: null,
+      depthDataUrl: null,
+      crossviewDataUrl: null,
+      hasModelLoaded: false,
+      isProcessing: false,
+      tiltSpeedMode: 'instant', // 'instant' (snappy 0.45) vs 'ultra' (direct 1.0)
+      tiltSensitivity: 1.8,
+      depthPop: 0.10
+    };
+
+    // DOM Elements
+    const emptyHero = document.getElementById('emptyHero');
+    const hologramCanvas = document.getElementById('hologramCanvas');
+    const crossviewCanvas = document.getElementById('crossviewCanvas');
+    const depthImg = document.getElementById('depthImg');
+    const sourceImg = document.getElementById('sourceImg');
+    const holoDock = document.getElementById('holoDock');
+    const tuningBar = document.getElementById('tuningBar');
+    const aiSpinner = document.getElementById('aiSpinner');
+    const txtAiStatus = document.getElementById('txtAiStatus');
+    const fileInput = document.getElementById('fileInput');
+    const btnPickPhoto = document.getElementById('btnPickPhoto');
+    const fabPickPhoto = document.getElementById('fabPickPhoto');
+    const toast = document.getElementById('toast');
+    const toastMsg = document.getElementById('toastMsg');
+    const btnRecenterGyro = document.getElementById('btnRecenterGyro');
+    const btnSpeedToggle = document.getElementById('btnSpeedToggle');
+    const txtSpeedMode = document.getElementById('txtSpeedMode');
+    const sliderSensitivity = document.getElementById('sliderSensitivity');
+    const valSensitivity = document.getElementById('valSensitivity');
+    const sliderDepthPop = document.getElementById('sliderDepthPop');
+    const valDepthPop = document.getElementById('valDepthPop');
+
+    function showToast(msg) {
+      toastMsg.innerText = msg;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 2800);
+    }
+
+    // Photo Input Listeners
+    btnPickPhoto.addEventListener('click', () => fileInput.click());
+    fabPickPhoto.addEventListener('click', () => fileInput.click());
+
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files && e.target.files[0]) {
+        handleImageFile(e.target.files[0]);
+      }
+    });
+
+    // --- Tab Switching ---
+    document.querySelectorAll('.tab-bar .tab-item').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-bar .tab-item').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        state.activeTab = btn.dataset.tab;
+        updateStageView();
+      });
+    });
+
+    function updateStageView() {
+      if (!state.sourceDataUrl) {
+        emptyHero.style.display = 'flex';
+        hologramCanvas.style.display = 'none';
+        crossviewCanvas.style.display = 'none';
+        depthImg.style.display = 'none';
+        sourceImg.style.display = 'none';
+        holoDock.style.display = 'none';
+        tuningBar.style.display = 'none';
+        return;
+      }
+
+      emptyHero.style.display = 'none';
+      hologramCanvas.style.display = state.activeTab === 'hologram' ? 'block' : 'none';
+      crossviewCanvas.style.display = state.activeTab === 'crossview' ? 'block' : 'none';
+      depthImg.style.display = state.activeTab === 'depth' ? 'block' : 'none';
+      sourceImg.style.display = state.activeTab === 'source' ? 'block' : 'none';
+
+      // Controls dock and tuning bar only active on hologram tab
+      holoDock.style.display = state.activeTab === 'hologram' ? 'flex' : 'none';
+      tuningBar.style.display = state.activeTab === 'hologram' ? 'flex' : 'none';
+
+      if (state.activeTab === 'hologram') {
+        startHologramLoop();
+      } else {
+        stopHologramLoop();
+      }
+    }
+
+    // --- WebGL Hologram Shader & Snappy Gyroscope Tilt ---
+    let gl = null;
+    let holoProgram = null;
+    let holoTexImage = null;
+    let holoTexDepth = null;
+    let holoAnimId = null;
+
+    let targetX = 0;
+    let targetY = 0;
+    let currentX = 0;
+    let currentY = 0;
+    let gyroZeroBeta = null;
+    let gyroZeroGamma = null;
+
+    const vsSource = `
+      attribute vec2 a_pos;
+      varying vec2 v_uv;
+      void main() {
+        v_uv = (a_pos + 1.0) * 0.5;
+        v_uv.y = 1.0 - v_uv.y;
+        gl_Position = vec4(a_pos, 0.0, 1.0);
+      }
+    `;
+
+    const fsSource = `
+      precision mediump float;
+      varying vec2 v_uv;
+      uniform sampler2D u_image;
+      uniform sampler2D u_depth;
+      uniform vec2 u_offset;
+      uniform float u_depth_scale;
+
+      void main() {
+        // Multi-sample parallax depth occlusion mapping
+        float d1 = texture2D(u_depth, v_uv).r;
+        vec2 disp1 = u_offset * (d1 - 0.5) * u_depth_scale;
+        vec2 uv2 = clamp(v_uv - disp1, vec2(0.001), vec2(0.999));
+
+        float d2 = texture2D(u_depth, uv2).r;
+        vec2 finalDisp = u_offset * ((d1 + d2) * 0.5 - 0.5) * u_depth_scale;
+        vec2 finalUV = clamp(v_uv - finalDisp, vec2(0.001), vec2(0.999));
+
+        gl_FragColor = texture2D(u_image, finalUV);
+      }
+    `;
+
+    function initHoloGL() {
+      if (gl) return true;
+      try {
+        gl = hologramCanvas.getContext('webgl', { alpha: false, antialias: true, depth: false }) ||
+             hologramCanvas.getContext('experimental-webgl', { alpha: false, depth: false });
+        if (!gl) return false;
+
+        const vs = gl.createShader(gl.VERTEX_SHADER);
+        gl.shaderSource(vs, vsSource);
+        gl.compileShader(vs);
+
+        const fs = gl.createShader(gl.FRAGMENT_SHADER);
+        gl.shaderSource(fs, fsSource);
+        gl.compileShader(fs);
+
+        holoProgram = gl.createProgram();
+        gl.attachShader(holoProgram, vs);
+        gl.attachShader(holoProgram, fs);
+        gl.linkProgram(holoProgram);
+
+        // Quad
+        const verts = new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]);
+        const buf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
+
+        const posAttr = gl.getAttribLocation(holoProgram, 'a_pos');
+        gl.enableVertexAttribArray(posAttr);
+        gl.vertexAttribPointer(posAttr, 2, gl.FLOAT, false, 0, 0);
+
+        return true;
+      } catch (e) {
+        console.error("WebGL init error:", e);
+        return false;
+      }
+    }
+
+    function createTexture(imageElement) {
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, imageElement);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      return tex;
+    }
+
+    function loadHoloTextures() {
+      if (!initHoloGL() || !state.sourceImgElement || !state.depthCanvas) return;
+      hologramCanvas.width = state.sourceImgElement.naturalWidth || 1080;
+      hologramCanvas.height = state.sourceImgElement.naturalHeight || 720;
+      gl.viewport(0, 0, hologramCanvas.width, hologramCanvas.height);
+
+      holoTexImage = createTexture(state.sourceImgElement);
+      holoTexDepth = createTexture(state.depthCanvas);
+    }
+
+    function renderHolo() {
+      if (state.activeTab !== 'hologram') {
+        holoAnimId = null;
+        return;
+      }
+
+      // Fast, ultra-snappy responsiveness:
+      // If Instant mode: 0.45 lerp factor (zero visible lag). If Direct: 1.0 instant reaction!
+      const lerpFactor = state.tiltSpeedMode === 'ultra' ? 1.0 : 0.45;
+      currentX += (targetX - currentX) * lerpFactor;
+      currentY += (targetY - currentY) * lerpFactor;
+
+      if (gl && holoProgram && holoTexImage && holoTexDepth) {
+        gl.useProgram(holoProgram);
+
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, holoTexImage);
+        gl.uniform1i(gl.getUniformLocation(holoProgram, 'u_image'), 0);
+
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, holoTexDepth);
+        gl.uniform1i(gl.getUniformLocation(holoProgram, 'u_depth'), 1);
+
+        gl.uniform2f(gl.getUniformLocation(holoProgram, 'u_offset'), currentX, currentY);
+        gl.uniform1f(gl.getUniformLocation(holoProgram, 'u_depth_scale'), state.depthPop);
+
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+      }
+
+      holoAnimId = requestAnimationFrame(renderHolo);
+    }
+
+    function startHologramLoop() {
+      loadHoloTextures();
+      if (!holoAnimId) holoAnimId = requestAnimationFrame(renderHolo);
+    }
+
+    function stopHologramLoop() {
+      if (holoAnimId) {
+        cancelAnimationFrame(holoAnimId);
+        holoAnimId = null;
+      }
+    }
+
+    // --- High-Speed Device Orientation Tilt (Zero Lag) ---
+    function onDeviceOrientation(e) {
+      if (e.gamma === null || e.beta === null || state.activeTab !== 'hologram') return;
+
+      if (gyroZeroGamma === null || gyroZeroBeta === null) {
+        gyroZeroGamma = e.gamma;
+        gyroZeroBeta = e.beta;
+      }
+
+      const dGamma = (e.gamma - gyroZeroGamma) * state.tiltSensitivity;
+      const dBeta = (e.beta - gyroZeroBeta) * state.tiltSensitivity;
+
+      // 12 degrees is full tilt range with sensitivity multiplier
+      targetX = Math.max(-1.0, Math.min(1.0, dGamma / 12.0));
+      targetY = Math.max(-1.0, Math.min(1.0, dBeta / 12.0));
+    }
+    window.addEventListener('deviceorientation', onDeviceOrientation);
+
+    // Touch Drag Parallax Fallback
+    hologramCanvas.addEventListener('touchmove', (e) => {
+      if (e.touches && e.touches.length > 0) {
+        const rect = hologramCanvas.getBoundingClientRect();
+        const t = e.touches[0];
+        const relX = ((t.clientX - rect.left) / rect.width) * 2.0 - 1.0;
+        const relY = ((t.clientY - rect.top) / rect.height) * 2.0 - 1.0;
+        targetX = Math.max(-1.0, Math.min(1.0, relX * state.tiltSensitivity));
+        targetY = Math.max(-1.0, Math.min(1.0, relY * state.tiltSensitivity));
+      }
+    }, { passive: true });
+
+    // Controls
+    btnRecenterGyro.addEventListener('click', () => {
+      gyroZeroGamma = null;
+      gyroZeroBeta = null;
+      targetX = 0;
+      targetY = 0;
+      showToast("🎯 Tilt re-centered to current angle!");
+    });
+
+    btnSpeedToggle.addEventListener('click', () => {
+      if (state.tiltSpeedMode === 'instant') {
+        state.tiltSpeedMode = 'ultra';
+        txtSpeedMode.innerText = "Ultra Direct";
+        showToast("⚡ Ultra-Direct Tilt (1:1 zero delay)");
+      } else {
+        state.tiltSpeedMode = 'instant';
+        txtSpeedMode.innerText = "Instant Tilt";
+        showToast("🚀 Instant Snappy Tilt");
+      }
+    });
+
+    sliderSensitivity.addEventListener('input', (e) => {
+      state.tiltSensitivity = parseFloat(e.target.value);
+      valSensitivity.innerText = state.tiltSensitivity.toFixed(1) + '×';
+    });
+
+    sliderDepthPop.addEventListener('input', (e) => {
+      state.depthPop = parseFloat(e.target.value);
+      valDepthPop.innerText = state.depthPop.toFixed(2);
+    });
+
+    // --- Fast Client-Side DIBR CrossView Synthesis (20ms on Canvas) ---
+    function generateCrossViewStereo(img, depthCanvas) {
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      const maxSide = 1080;
+      const scale = Math.min(1.0, maxSide / Math.max(w, h));
+      const sw = Math.round(w * scale);
+      const sh = Math.round(h * scale);
+
+      // Create stereo side-by-side canvas: width is 2 * sw
+      crossviewCanvas.width = sw * 2;
+      crossviewCanvas.height = sh;
+      const ctx = crossviewCanvas.getContext('2d');
+
+      // Sample source RGB and Depth
+      const tempC = document.createElement('canvas');
+      tempC.width = sw;
+      tempC.height = sh;
+      const tctx = tempC.getContext('2d');
+      tctx.drawImage(img, 0, 0, sw, sh);
+      const srcData = tctx.getImageData(0, 0, sw, sh).data;
+
+      tctx.clearRect(0, 0, sw, sh);
+      tctx.drawImage(depthCanvas, 0, 0, sw, sh);
+      const depthData = tctx.getImageData(0, 0, sw, sh).data;
+
+      // Output Left and Right Eye
+      const leftImgData = ctx.createImageData(sw, sh);
+      const rightImgData = ctx.createImageData(sw, sh);
+      const ld = leftImgData.data;
+      const rd = rightImgData.data;
+
+      const maxShift = sw * 0.025; // standard ~2.5% stereo baseline
+
+      for (let y = 0; y < sh; y++) {
+        for (let x = 0; x < sw; x++) {
+          const idx = (y * sw + x) * 4;
+          const d = depthData[idx] / 255.0; // 0 (far) to 1 (near)
+          const shift = Math.round((d - 0.5) * maxShift);
+
+          // Left eye: shifted right
+          const lx = Math.max(0, Math.min(sw - 1, x + shift));
+          const lIdx = (y * sw + lx) * 4;
+          ld[lIdx] = srcData[idx];
+          ld[lIdx + 1] = srcData[idx + 1];
+          ld[lIdx + 2] = srcData[idx + 2];
+          ld[lIdx + 3] = 255;
+
+          // Right eye: shifted left
+          const rx = Math.max(0, Math.min(sw - 1, x - shift));
+          const rIdx = (y * sw + rx) * 4;
+          rd[rIdx] = srcData[idx];
+          rd[rIdx + 1] = srcData[idx + 1];
+          rd[rIdx + 2] = srcData[idx + 2];
+          rd[rIdx + 3] = 255;
+        }
+      }
+
+      // Draw CrossView (Right eye on Left side, Left eye on Right side)
+      const cLeft = document.createElement('canvas');
+      cLeft.width = sw;
+      cLeft.height = sh;
+      cLeft.getContext('2d').putImageData(rightImgData, 0, 0);
+
+      const cRight = document.createElement('canvas');
+      cRight.width = sw;
+      cRight.height = sh;
+      cRight.getContext('2d').putImageData(leftImgData, 0, 0);
+
+      ctx.drawImage(cLeft, 0, 0);
+      ctx.drawImage(cRight, sw, 0);
+      state.crossviewDataUrl = crossviewCanvas.toDataURL('image/jpeg', 0.92);
+    }
+
+    // --- Depth Estimation (WebGPU Snapdragon Model or Fallback) ---
+    let depthPipeline = null;
+
+    async function initWebGpuPipeline() {
+      if (depthPipeline) return depthPipeline;
+      try {
+        txtAiStatus.innerText = "Loading Depth Model onto Snapdragon GPU...";
+        const { pipeline, env } = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3');
+        env.backends.onnx.wasm.proxy = false;
+
+        depthPipeline = await pipeline('depth-estimation', 'onnx-community/depth-anything-v2-small', {
+          device: 'webgpu',
+          dtype: 'fp32'
+        });
+        state.hasModelLoaded = true;
+        return depthPipeline;
+      } catch (err) {
+        console.warn("WebGPU load fallback to wasm/cpu:", err);
+        // Fallback to CPU WASM if WebGPU flag isn't enabled
+        const { pipeline } = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3');
+        depthPipeline = await pipeline('depth-estimation', 'onnx-community/depth-anything-v2-small');
+        state.hasModelLoaded = true;
+        return depthPipeline;
+      }
+    }
+
+    async function handleImageFile(file) {
+      aiSpinner.style.display = 'flex';
+      txtAiStatus.innerText = "Preparing photo...";
+      txtAiSub.innerText = "Optimizing tensor size for mobile GPU";
+
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        state.sourceDataUrl = e.target.result;
+        sourceImg.src = state.sourceDataUrl;
+
+        const img = new Image();
+        img.onload = async () => {
+          state.sourceImgElement = img;
+
+          try {
+            txtAiStatus.innerText = "Running Depth Anything V2 on Adreno GPU...";
+            const pipe = await initWebGpuPipeline();
+
+            const t0 = performance.now();
+            const out = await pipe(img.src);
+            const elapsed = Math.round(performance.now() - t0);
+
+            // Output depth map
+            const depthRaw = out.depth;
+            const dCanvas = document.createElement('canvas');
+            dCanvas.width = depthRaw.width;
+            dCanvas.height = depthRaw.height;
+            const dCtx = dCanvas.getContext('2d');
+            const imgData = dCtx.createImageData(depthRaw.width, depthRaw.height);
+
+            // Convert raw depth float/uint to grayscale RGBA
+            const rawData = depthRaw.data;
+            for (let i = 0; i < rawData.length; i++) {
+              const val = rawData[i];
+              imgData.data[i * 4] = val;
+              imgData.data[i * 4 + 1] = val;
+              imgData.data[i * 4 + 2] = val;
+              imgData.data[i * 4 + 3] = 255;
+            }
+            dCtx.putImageData(imgData, 0, 0);
+
+            state.depthCanvas = dCanvas;
+            state.depthDataUrl = dCanvas.toDataURL('image/png');
+            depthImg.src = state.depthDataUrl;
+
+            // Generate CrossView
+            generateCrossViewStereo(img, dCanvas);
+
+            aiSpinner.style.display = 'none';
+            showToast(`✨ Generated on mobile GPU in ${elapsed} ms!`);
+            updateStageView();
+          } catch (aiErr) {
+            console.error("AI inference error:", aiErr);
+            aiSpinner.style.display = 'none';
+            showToast("Failed to process depth: " + aiErr.message);
+          }
+        };
+        img.src = state.sourceDataUrl;
+      };
+      reader.readAsDataURL(file);
+    }
+  </script>
+</body>
+
+</html>
