@@ -447,6 +447,16 @@
   <!-- Viewport Stage -->
   <div class="viewport-stage" id="stageContainer">
 
+    <!-- Floating Dock Controls (CrossView Mode) -->
+    <div id="crossviewDock" class="floating-dock" style="display:none;">
+      <button id="btnDownloadStereo" class="dock-btn active" title="Save 3D Stereogram to Photos">
+        <i class="fa-solid fa-download"></i> Save 3D Photo
+      </button>
+      <button id="btnSwapEyes" class="dock-btn" title="Toggle Cross-Eye vs Parallel View">
+        <i class="fa-solid fa-repeat"></i> <span id="txtEyeMode">Cross-Eye</span>
+      </button>
+    </div>
+
     <!-- Floating Dock Controls (Hologram Mode) -->
     <div id="holoDock" class="floating-dock" style="display:none;">
       <button id="btnRecenterGyro" class="dock-btn" title="Re-zero neutral tilt">
@@ -510,13 +520,13 @@
 
   <!-- Bottom Navigation Tab Bar -->
   <nav class="tab-bar">
-    <button class="tab-item active" data-tab="hologram">
+    <button class="tab-item active" data-tab="crossview">
+      <i class="fa-solid fa-glasses"></i>
+      <span>CrossView 3D</span>
+    </button>
+    <button class="tab-item" data-tab="hologram">
       <i class="fa-solid fa-eye"></i>
       <span>Hologram</span>
-    </button>
-    <button class="tab-item" data-tab="crossview">
-      <i class="fa-solid fa-glasses"></i>
-      <span>CrossView</span>
     </button>
     <button class="tab-item" data-tab="depth">
       <i class="fa-solid fa-mountain"></i>
@@ -546,7 +556,8 @@
   <script type="module">
     // --- State ---
     const state = {
-      activeTab: 'hologram',
+      activeTab: 'crossview', // Default view is CrossView 3D
+      eyeMode: 'crossview',   // 'crossview' (Cross-Eye) vs 'parallel'
       sourceImgElement: null,
       depthCanvas: null,
       sourceDataUrl: null,
@@ -565,6 +576,7 @@
     const crossviewCanvas = document.getElementById('crossviewCanvas');
     const depthImg = document.getElementById('depthImg');
     const sourceImg = document.getElementById('sourceImg');
+    const crossviewDock = document.getElementById('crossviewDock');
     const holoDock = document.getElementById('holoDock');
     const tuningBar = document.getElementById('tuningBar');
     const aiSpinner = document.getElementById('aiSpinner');
@@ -581,6 +593,9 @@
     const valSensitivity = document.getElementById('valSensitivity');
     const sliderDepthPop = document.getElementById('sliderDepthPop');
     const valDepthPop = document.getElementById('valDepthPop');
+    const btnDownloadStereo = document.getElementById('btnDownloadStereo');
+    const btnSwapEyes = document.getElementById('btnSwapEyes');
+    const txtEyeMode = document.getElementById('txtEyeMode');
 
     function showToast(msg) {
       toastMsg.innerText = msg;
@@ -615,6 +630,7 @@
         crossviewCanvas.style.display = 'none';
         depthImg.style.display = 'none';
         sourceImg.style.display = 'none';
+        if (crossviewDock) crossviewDock.style.display = 'none';
         holoDock.style.display = 'none';
         tuningBar.style.display = 'none';
         return;
@@ -626,6 +642,9 @@
       depthImg.style.display = state.activeTab === 'depth' ? 'block' : 'none';
       sourceImg.style.display = state.activeTab === 'source' ? 'block' : 'none';
 
+      // CrossView dock active only on crossview tab
+      if (crossviewDock) crossviewDock.style.display = state.activeTab === 'crossview' ? 'flex' : 'none';
+
       // Controls dock and tuning bar only active on hologram tab
       holoDock.style.display = state.activeTab === 'hologram' ? 'flex' : 'none';
       tuningBar.style.display = state.activeTab === 'hologram' ? 'flex' : 'none';
@@ -635,6 +654,30 @@
       } else {
         stopHologramLoop();
       }
+    }
+
+    if (btnDownloadStereo) {
+      btnDownloadStereo.addEventListener('click', () => {
+        if (!state.crossviewDataUrl) return;
+        const a = document.createElement('a');
+        a.href = state.crossviewDataUrl;
+        a.download = `3D_${state.eyeMode === 'parallel' ? 'Parallel' : 'CrossView'}_Stereogram.jpg`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        showToast("📸 3D Stereogram saved to your gallery!");
+      });
+    }
+
+    if (btnSwapEyes) {
+      btnSwapEyes.addEventListener('click', () => {
+        state.eyeMode = state.eyeMode === 'crossview' ? 'parallel' : 'crossview';
+        txtEyeMode.innerText = state.eyeMode === 'parallel' ? 'Parallel' : 'Cross-Eye';
+        if (state.sourceImgElement && state.depthCanvas) {
+          generateCrossViewStereo(state.sourceImgElement, state.depthCanvas);
+          showToast(`Swapped to ${state.eyeMode === 'parallel' ? 'Parallel-Eye 3D' : 'Cross-Eye 3D'}`);
+        }
+      });
     }
 
     // --- WebGL Hologram Shader & Snappy Gyroscope Tilt ---
@@ -847,7 +890,7 @@
       valDepthPop.innerText = state.depthPop.toFixed(2);
     });
 
-    // --- Fast Client-Side DIBR CrossView Synthesis (20ms on Canvas) ---
+    // --- High-Quality DIBR Backward Warping (Zero Holes, Zero Black Lines) ---
     function generateCrossViewStereo(img, depthCanvas) {
       const w = img.naturalWidth;
       const h = img.naturalHeight;
@@ -856,12 +899,12 @@
       const sw = Math.round(w * scale);
       const sh = Math.round(h * scale);
 
-      // Create stereo side-by-side canvas: width is 2 * sw
+      // Stereo canvas: 2 * sw wide
       crossviewCanvas.width = sw * 2;
       crossviewCanvas.height = sh;
       const ctx = crossviewCanvas.getContext('2d');
 
-      // Sample source RGB and Depth
+      // Sample source RGB and Depth onto temporary canvas
       const tempC = document.createElement('canvas');
       tempC.width = sw;
       tempC.height = sh;
@@ -873,52 +916,138 @@
       tctx.drawImage(depthCanvas, 0, 0, sw, sh);
       const depthData = tctx.getImageData(0, 0, sw, sh).data;
 
-      // Output Left and Right Eye
+      // Output Left and Right Eye buffers
       const leftImgData = ctx.createImageData(sw, sh);
       const rightImgData = ctx.createImageData(sw, sh);
       const ld = leftImgData.data;
       const rd = rightImgData.data;
 
-      const maxShift = sw * 0.025; // standard ~2.5% stereo baseline
+      const maxShift = sw * 0.025; // standard 2.5% stereo baseline
+      const fadePx = Math.max(16.0, Math.min(sw * 0.08, maxShift * 2.5));
+
+      // Precalculate horizontal edge window taper (eliminates border cuts & edge black lines)
+      const edgeTaper = new Float32Array(sw);
+      for (let x = 0; x < sw; x++) {
+        const dist = Math.min(x, sw - 1 - x);
+        const t = Math.max(0.0, Math.min(1.0, dist / fadePx));
+        edgeTaper[x] = t * t * (3.0 - 2.0 * t);
+      }
+
+      // Pre-extract normalized depth plane (0.0 far to 1.0 near)
+      const depthNorm = new Float32Array(sw * sh);
+      for (let i = 0; i < sw * sh; i++) {
+        depthNorm[i] = depthData[i * 4] / 255.0;
+      }
+
+      // 1. Directional Occlusion Depth Erosion (Exact 1:1 port of desktop CUDA algorithm)
+      // Eliminates silhouette cutout lines by expanding background textures seamlessly into disocclusion gaps
+      const kRadius = Math.max(2, Math.min(10, Math.round(maxShift * 0.45)));
+      const erodedDepthLeft = new Float32Array(sw * sh);
+      const erodedDepthRight = new Float32Array(sw * sh);
 
       for (let y = 0; y < sh; y++) {
+        const rowOffset = y * sw;
+
         for (let x = 0; x < sw; x++) {
-          const idx = (y * sw + x) * 4;
-          const d = depthData[idx] / 255.0; // 0 (far) to 1 (near)
-          const shift = Math.round((d - 0.5) * maxShift);
+          const idx = rowOffset + x;
+          const curD = depthNorm[idx];
 
-          // Left eye: shifted right
-          const lx = Math.max(0, Math.min(sw - 1, x + shift));
-          const lIdx = (y * sw + lx) * 4;
-          ld[lIdx] = srcData[idx];
-          ld[lIdx + 1] = srcData[idx + 1];
-          ld[lIdx + 2] = srcData[idx + 2];
-          ld[lIdx + 3] = 255;
+          // Edge gradient magnitude (detects steep depth boundary cliffs)
+          const xPrev = x > 0 ? x - 1 : 0;
+          const xNext = x < sw - 1 ? x + 1 : sw - 1;
+          const diffX = Math.abs(depthNorm[rowOffset + xNext] - depthNorm[rowOffset + xPrev]);
+          const edgeWeight = Math.min(1.0, diffX * 3.5);
 
-          // Right eye: shifted left
-          const rx = Math.max(0, Math.min(sw - 1, x - shift));
-          const rIdx = (y * sw + rx) * 4;
-          rd[rIdx] = srcData[idx];
-          rd[rIdx + 1] = srcData[idx + 1];
-          rd[rIdx + 2] = srcData[idx + 2];
-          rd[rIdx + 3] = 255;
+          // 1D Min-pooling for Left Eye (disocclusion is to the left of foreground)
+          let minDLeft = curD;
+          const xStartL = Math.max(0, x - kRadius);
+          for (let kx = xStartL; kx <= x; kx++) {
+            const kd = depthNorm[rowOffset + kx];
+            if (kd < minDLeft) minDLeft = kd;
+          }
+
+          // 1D Min-pooling for Right Eye (disocclusion is to the right of foreground)
+          let minDRight = curD;
+          const xEndR = Math.min(sw - 1, x + kRadius);
+          for (let kx = x; kx <= xEndR; kx++) {
+            const kd = depthNorm[rowOffset + kx];
+            if (kd < minDRight) minDRight = kd;
+          }
+
+          // Blend: maintain sharp depth on bodies, prioritize background at cliff edges
+          erodedDepthLeft[idx]  = curD * (1.0 - edgeWeight * 0.70) + minDLeft  * (edgeWeight * 0.70);
+          erodedDepthRight[idx] = curD * (1.0 - edgeWeight * 0.70) + minDRight * (edgeWeight * 0.70);
         }
       }
 
-      // Draw CrossView (Right eye on Left side, Left eye on Right side)
+      // 2. Backward Warping (Inverse Subpixel Mapping)
+      // Every destination pixel (x, y) samples from the source image.
+      // 100% filled: ZERO disocclusion holes, ZERO black lines!
+      for (let y = 0; y < sh; y++) {
+        const rowOffset = y * sw;
+
+        for (let x = 0; x < sw; x++) {
+          const idx = rowOffset + x;
+          const taper = edgeTaper[x];
+          const outIdx = idx * 4;
+
+          // Left Eye Sampling
+          const shiftLeft = (erodedDepthLeft[idx] - 0.5) * maxShift * taper;
+          let sxLeft = x - shiftLeft;
+          if (sxLeft < 0) sxLeft = 0;
+          else if (sxLeft > sw - 1) sxLeft = sw - 1;
+
+          const sxLFloor = Math.floor(sxLeft);
+          const sxLFrac = sxLeft - sxLFloor;
+          const sxLCeil = Math.min(sw - 1, sxLFloor + 1);
+          const srcIdxL0 = (rowOffset + sxLFloor) * 4;
+          const srcIdxL1 = (rowOffset + sxLCeil) * 4;
+
+          ld[outIdx]     = Math.round((1 - sxLFrac) * srcData[srcIdxL0]     + sxLFrac * srcData[srcIdxL1]);
+          ld[outIdx + 1] = Math.round((1 - sxLFrac) * srcData[srcIdxL0 + 1] + sxLFrac * srcData[srcIdxL1 + 1]);
+          ld[outIdx + 2] = Math.round((1 - sxLFrac) * srcData[srcIdxL0 + 2] + sxLFrac * srcData[srcIdxL1 + 2]);
+          ld[outIdx + 3] = 255;
+
+          // Right Eye Sampling
+          const shiftRight = (erodedDepthRight[idx] - 0.5) * maxShift * taper;
+          let sxRight = x + shiftRight;
+          if (sxRight < 0) sxRight = 0;
+          else if (sxRight > sw - 1) sxRight = sw - 1;
+
+          const sxRFloor = Math.floor(sxRight);
+          const sxRFrac = sxRight - sxRFloor;
+          const sxRCeil = Math.min(sw - 1, sxRFloor + 1);
+          const srcIdxR0 = (rowOffset + sxRFloor) * 4;
+          const srcIdxR1 = (rowOffset + sxRCeil) * 4;
+
+          rd[outIdx]     = Math.round((1 - sxRFrac) * srcData[srcIdxR0]     + sxRFrac * srcData[srcIdxR1]);
+          rd[outIdx + 1] = Math.round((1 - sxRFrac) * srcData[srcIdxR0 + 1] + sxRFrac * srcData[srcIdxR1 + 1]);
+          rd[outIdx + 2] = Math.round((1 - sxRFrac) * srcData[srcIdxR0 + 2] + sxRFrac * srcData[srcIdxR1 + 2]);
+          rd[outIdx + 3] = 255;
+        }
+      }
+
+      // Output eye canvases
       const cLeft = document.createElement('canvas');
       cLeft.width = sw;
       cLeft.height = sh;
-      cLeft.getContext('2d').putImageData(rightImgData, 0, 0);
+      cLeft.getContext('2d').putImageData(leftImgData, 0, 0);
 
       const cRight = document.createElement('canvas');
       cRight.width = sw;
       cRight.height = sh;
-      cRight.getContext('2d').putImageData(leftImgData, 0, 0);
+      cRight.getContext('2d').putImageData(rightImgData, 0, 0);
 
-      ctx.drawImage(cLeft, 0, 0);
-      ctx.drawImage(cRight, sw, 0);
-      state.crossviewDataUrl = crossviewCanvas.toDataURL('image/jpeg', 0.92);
+      // In Cross-Eye mode: Right eye on Left side, Left eye on Right side
+      // In Parallel mode: Left eye on Left side, Right eye on Right side
+      if (state.eyeMode === 'parallel') {
+        ctx.drawImage(cLeft, 0, 0);
+        ctx.drawImage(cRight, sw, 0);
+      } else {
+        ctx.drawImage(cRight, 0, 0);
+        ctx.drawImage(cLeft, sw, 0);
+      }
+      state.crossviewDataUrl = crossviewCanvas.toDataURL('image/jpeg', 0.94);
     }
 
     // --- Depth Estimation (WebGPU Snapdragon Model or Fallback) ---
@@ -992,11 +1121,17 @@
             state.depthDataUrl = dCanvas.toDataURL('image/png');
             depthImg.src = state.depthDataUrl;
 
-            // Generate CrossView
+            // Generate CrossView Stereogram
             generateCrossViewStereo(img, dCanvas);
 
+            // Set CrossView as strictly default & active
+            state.activeTab = 'crossview';
+            document.querySelectorAll('.tab-bar .tab-item').forEach(b => {
+              b.classList.toggle('active', b.dataset.tab === 'crossview');
+            });
+
             aiSpinner.style.display = 'none';
-            showToast(`✨ Generated on mobile GPU in ${elapsed} ms!`);
+            showToast(`✨ 3D CrossView generated in ${elapsed} ms!`);
             updateStageView();
           } catch (aiErr) {
             console.error("AI inference error:", aiErr);
