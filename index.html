@@ -460,8 +460,8 @@
       </div>
     </div>
 
-    <div id="deviceBadge" class="device-badge">
-      <i class="fa-solid fa-bolt"></i>
+    <div id="deviceBadge" class="device-badge" style="cursor:pointer;" title="Tap to switch between WebGPU (Fast GPU) and CPU Safe Mode (Fixes stripes)">
+      <i class="fa-solid fa-bolt text-emerald-400" id="engineIcon"></i>
       <span id="txtGpuMode">Snapdragon WebGPU</span>
     </div>
   </header>
@@ -581,6 +581,7 @@
       activeTab: 'crossview', // Default view is CrossView 3D
       eyeMode: 'crossview',   // 'crossview' (Cross-Eye) vs 'parallel'
       originalBaseName: 'photo',
+      engineMode: 'webgpu',   // 'webgpu' (Fast GPU) vs 'wasm' (CPU Safe Mode)
       sourceImgElement: null,
       depthCanvas: null,
       sourceDataUrl: null,
@@ -629,6 +630,42 @@
     // Photo Input Listeners
     btnPickPhoto.addEventListener('click', () => fileInput.click());
     fabPickPhoto.addEventListener('click', () => fileInput.click());
+
+    // --- Engine Switcher (WebGPU vs CPU Safe Mode) ---
+    const deviceBadge = document.getElementById('deviceBadge');
+    const engineIcon = document.getElementById('engineIcon');
+    const txtGpuMode = document.getElementById('txtGpuMode');
+
+    function updateDeviceBadgeUI() {
+      if (state.engineMode === 'wasm') {
+        txtGpuMode.innerText = "CPU Safe Mode";
+        if (engineIcon) engineIcon.className = "fa-solid fa-shield-halved text-cyan-400";
+        deviceBadge.style.borderColor = "rgba(6, 182, 212, 0.5)";
+      } else {
+        txtGpuMode.innerText = "Snapdragon WebGPU";
+        if (engineIcon) engineIcon.className = "fa-solid fa-bolt text-emerald-400";
+        deviceBadge.style.borderColor = "rgba(16, 185, 129, 0.35)";
+      }
+    }
+
+    if (deviceBadge) {
+      deviceBadge.addEventListener('click', async () => {
+        if (state.isProcessing) return;
+        state.engineMode = state.engineMode === 'webgpu' ? 'wasm' : 'webgpu';
+        updateDeviceBadgeUI();
+        depthPipeline = null; // Reset to reload model for target engine
+
+        if (state.engineMode === 'wasm') {
+          showToast("🛡️ Switched to CPU Safe Mode (eliminates GPU driver stripes)");
+        } else {
+          showToast("⚡ Switched to Snapdragon WebGPU");
+        }
+
+        if (state.sourceImgElement) {
+          await runDepthInference(state.sourceImgElement);
+        }
+      });
+    }
 
     fileInput.addEventListener('change', (e) => {
       if (e.target.files && e.target.files[0]) {
@@ -1098,10 +1135,24 @@
     // --- Depth Estimation (Ultra-Lightweight 26MB Mobile Model) ---
     let depthPipeline = null;
 
-    async function initWebGpuPipeline() {
-      if (depthPipeline) return depthPipeline;
+    async function initDepthPipeline(device = null) {
+      const targetDevice = device || state.engineMode || 'webgpu';
+      if (depthPipeline && depthPipeline._device === targetDevice) return depthPipeline;
+
       const { pipeline, env } = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3');
       env.backends.onnx.wasm.proxy = false;
+
+      if (targetDevice === 'wasm') {
+        txtAiStatus.innerText = "Loading Safe Mobile Model (26MB CPU)...";
+        txtAiSub.innerText = "Running quantized WASM (100% clean & stripe-free)";
+        depthPipeline = await pipeline('depth-estimation', 'onnx-community/depth-anything-v2-small', {
+          device: 'wasm',
+          dtype: 'q4'
+        });
+        depthPipeline._device = 'wasm';
+        state.hasModelLoaded = true;
+        return depthPipeline;
+      }
 
       try {
         txtAiStatus.innerText = "Loading Light Mobile Model (26MB)...";
@@ -1111,19 +1162,146 @@
           device: 'webgpu',
           dtype: 'q4'
         });
+        depthPipeline._device = 'webgpu';
         state.hasModelLoaded = true;
         return depthPipeline;
       } catch (err) {
         console.warn("WebGPU load fallback to wasm/cpu q4:", err);
-        txtAiStatus.innerText = "Loading Light Mobile Model (26MB WASM)...";
+        state.engineMode = 'wasm';
+        updateDeviceBadgeUI();
+        txtAiStatus.innerText = "Loading Safe Mobile Model (26MB WASM)...";
         txtAiSub.innerText = "Running quantized CPU fallback";
         // Fallback to CPU WASM with q4 (26MB) for lower-RAM phones without WebGPU
         depthPipeline = await pipeline('depth-estimation', 'onnx-community/depth-anything-v2-small', {
           device: 'wasm',
           dtype: 'q4'
         });
+        depthPipeline._device = 'wasm';
         state.hasModelLoaded = true;
         return depthPipeline;
+      }
+    }
+
+    async function runDepthInference(img) {
+      state.isProcessing = true;
+      aiSpinner.style.display = 'flex';
+      txtAiStatus.innerText = "Estimating depth on mobile...";
+      txtAiSub.innerText = state.engineMode === 'wasm' 
+        ? "Running CPU Safe Mode (stripe-free)" 
+        : "Running Depth Anything V2 Small (q4)";
+
+      try {
+        const pipe = await initDepthPipeline();
+        const t0 = performance.now();
+
+        // Downscale input for AI inference (max 518px) to prevent mobile out-of-memory crashes
+        const origW = img.naturalWidth || img.width;
+        const origH = img.naturalHeight || img.height;
+        const maxAiDim = 518; // 518 = 14 * 37
+        let aiW = origW;
+        let aiH = origH;
+        if (aiW > maxAiDim || aiH > maxAiDim) {
+          if (aiW > aiH) {
+            aiH = Math.round((aiH * maxAiDim) / aiW);
+            aiW = maxAiDim;
+          } else {
+            aiW = Math.round((aiW * maxAiDim) / aiH);
+            aiH = maxAiDim;
+          }
+        }
+
+        // CRITICAL FIX FOR ADRENO WEBGPU STRIPES:
+        // ViT patch size for Depth Anything is strictly 14x14 pixels.
+        // If width or height is not a multiple of 14, WebGPU memory buffers shift by (W % 14) every row,
+        // producing barcode-like vertical stripes across portrait photos!
+        aiW = Math.max(14, Math.floor(aiW / 14) * 14);
+        aiH = Math.max(14, Math.floor(aiH / 14) * 14);
+
+        const aiCanvas = document.createElement('canvas');
+        aiCanvas.width = aiW;
+        aiCanvas.height = aiH;
+        const aiCtx = aiCanvas.getContext('2d');
+        aiCtx.drawImage(img, 0, 0, aiW, aiH);
+
+        // Run inference with the compact quantized model
+        const out = await pipe(aiCanvas.toDataURL('image/jpeg', 0.85));
+        const elapsed = Math.round(performance.now() - t0);
+
+        // Extract and normalize depth map cleanly
+        const depthRaw = out.depth;
+        let rawCanvas = null;
+
+        if (depthRaw && typeof depthRaw.toCanvas === 'function') {
+          try {
+            rawCanvas = depthRaw.toCanvas();
+          } catch (tcErr) {
+            console.warn("toCanvas failed, falling back to manual normalization:", tcErr);
+          }
+        }
+
+        if (!rawCanvas) {
+          const dW = depthRaw.width || aiW;
+          const dH = depthRaw.height || aiH;
+          rawCanvas = document.createElement('canvas');
+          rawCanvas.width = dW;
+          rawCanvas.height = dH;
+          const dCtx = rawCanvas.getContext('2d');
+          const imgData = dCtx.createImageData(dW, dH);
+          const rawData = depthRaw.data;
+
+          // Find range to normalize properly (prevents noise and salt-and-pepper)
+          let minVal = Infinity;
+          let maxVal = -Infinity;
+          for (let i = 0; i < rawData.length; i++) {
+            const v = rawData[i];
+            if (v < minVal) minVal = v;
+            if (v > maxVal) maxVal = v;
+          }
+          const isByte = (minVal >= 0 && maxVal <= 255 && maxVal > 1.0);
+          const range = (maxVal - minVal) > 1e-5 ? (maxVal - minVal) : 1.0;
+
+          for (let i = 0; i < dW * dH; i++) {
+            const v = rawData[i];
+            const norm = isByte ? v : Math.round(((v - minVal) / range) * 255);
+            imgData.data[i * 4] = norm;
+            imgData.data[i * 4 + 1] = norm;
+            imgData.data[i * 4 + 2] = norm;
+            imgData.data[i * 4 + 3] = 255;
+          }
+          dCtx.putImageData(imgData, 0, 0);
+        }
+
+        // Scale depth canvas back up to match original photo resolution
+        const finalDepthCanvas = document.createElement('canvas');
+        finalDepthCanvas.width = origW;
+        finalDepthCanvas.height = origH;
+        const fCtx = finalDepthCanvas.getContext('2d');
+        fCtx.imageSmoothingEnabled = true;
+        fCtx.imageSmoothingQuality = 'high';
+        fCtx.drawImage(rawCanvas, 0, 0, origW, origH);
+
+        state.depthCanvas = finalDepthCanvas;
+        state.depthDataUrl = finalDepthCanvas.toDataURL('image/png');
+        depthImg.src = state.depthDataUrl;
+
+        // Generate CrossView Stereogram
+        generateCrossViewStereo(img, finalDepthCanvas);
+
+        // Set CrossView as strictly default & active
+        state.activeTab = 'crossview';
+        document.querySelectorAll('.tab-bar .tab-item').forEach(b => {
+          b.classList.toggle('active', b.dataset.tab === 'crossview');
+        });
+
+        aiSpinner.style.display = 'none';
+        state.isProcessing = false;
+        showToast(`✨ 3D CrossView generated in ${elapsed} ms!`);
+        updateStageView();
+      } catch (aiErr) {
+        console.error("AI inference error:", aiErr);
+        aiSpinner.style.display = 'none';
+        state.isProcessing = false;
+        showToast("Failed to process depth: " + aiErr.message);
       }
     }
 
@@ -1143,114 +1321,7 @@
         const img = new Image();
         img.onload = async () => {
           state.sourceImgElement = img;
-
-          try {
-            txtAiStatus.innerText = "Estimating depth on mobile...";
-            txtAiSub.innerText = "Running Depth Anything V2 Small (q4)";
-            const pipe = await initWebGpuPipeline();
-
-            const t0 = performance.now();
-
-            // Downscale input for AI inference (max 518px) to prevent mobile out-of-memory crashes
-            const origW = img.naturalWidth || img.width;
-            const origH = img.naturalHeight || img.height;
-            const maxAiDim = 518;
-            let aiW = origW;
-            let aiH = origH;
-            if (aiW > maxAiDim || aiH > maxAiDim) {
-              if (aiW > aiH) {
-                aiH = Math.round((aiH * maxAiDim) / aiW);
-                aiW = maxAiDim;
-              } else {
-                aiW = Math.round((aiW * maxAiDim) / aiH);
-                aiH = maxAiDim;
-              }
-            }
-
-            const aiCanvas = document.createElement('canvas');
-            aiCanvas.width = aiW;
-            aiCanvas.height = aiH;
-            const aiCtx = aiCanvas.getContext('2d');
-            aiCtx.drawImage(img, 0, 0, aiW, aiH);
-
-            // Run inference with the compact quantized model
-            const out = await pipe(aiCanvas.toDataURL('image/jpeg', 0.85));
-            const elapsed = Math.round(performance.now() - t0);
-
-            // Extract and normalize depth map cleanly
-            const depthRaw = out.depth;
-            let rawCanvas = null;
-
-            if (depthRaw && typeof depthRaw.toCanvas === 'function') {
-              try {
-                rawCanvas = depthRaw.toCanvas();
-              } catch (tcErr) {
-                console.warn("toCanvas failed, falling back to manual normalization:", tcErr);
-              }
-            }
-
-            if (!rawCanvas) {
-              const dW = depthRaw.width || aiW;
-              const dH = depthRaw.height || aiH;
-              rawCanvas = document.createElement('canvas');
-              rawCanvas.width = dW;
-              rawCanvas.height = dH;
-              const dCtx = rawCanvas.getContext('2d');
-              const imgData = dCtx.createImageData(dW, dH);
-              const rawData = depthRaw.data;
-
-              // Find range to normalize properly (prevents noise and salt-and-pepper)
-              let minVal = Infinity;
-              let maxVal = -Infinity;
-              for (let i = 0; i < rawData.length; i++) {
-                const v = rawData[i];
-                if (v < minVal) minVal = v;
-                if (v > maxVal) maxVal = v;
-              }
-              const isByte = (minVal >= 0 && maxVal <= 255 && maxVal > 1.0);
-              const range = (maxVal - minVal) > 1e-5 ? (maxVal - minVal) : 1.0;
-
-              for (let i = 0; i < dW * dH; i++) {
-                const v = rawData[i];
-                const norm = isByte ? v : Math.round(((v - minVal) / range) * 255);
-                imgData.data[i * 4] = norm;
-                imgData.data[i * 4 + 1] = norm;
-                imgData.data[i * 4 + 2] = norm;
-                imgData.data[i * 4 + 3] = 255;
-              }
-              dCtx.putImageData(imgData, 0, 0);
-            }
-
-            // Scale depth canvas back up to match original photo resolution
-            const finalDepthCanvas = document.createElement('canvas');
-            finalDepthCanvas.width = origW;
-            finalDepthCanvas.height = origH;
-            const fCtx = finalDepthCanvas.getContext('2d');
-            fCtx.imageSmoothingEnabled = true;
-            fCtx.imageSmoothingQuality = 'high';
-            fCtx.drawImage(rawCanvas, 0, 0, origW, origH);
-
-            state.depthCanvas = finalDepthCanvas;
-            state.depthDataUrl = finalDepthCanvas.toDataURL('image/png');
-            depthImg.src = state.depthDataUrl;
-
-            // Generate CrossView Stereogram
-            generateCrossViewStereo(img, finalDepthCanvas);
-
-            // Set CrossView as strictly default & active
-            state.activeTab = 'crossview';
-            document.querySelectorAll('.tab-bar .tab-item').forEach(b => {
-              b.classList.toggle('active', b.dataset.tab === 'crossview');
-            });
-
-            aiSpinner.style.display = 'none';
-            showToast(`✨ 3D CrossView generated in ${elapsed} ms!`);
-            updateStageView();
-          } catch (aiErr) {
-            console.error("AI inference error:", aiErr);
-            aiSpinner.style.display = 'none';
-            showToast("Failed to process depth: " + aiErr.message);
-          }
+          await runDepthInference(img);
         };
         img.src = state.sourceDataUrl;
       };
