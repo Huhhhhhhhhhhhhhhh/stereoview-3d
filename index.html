@@ -558,6 +558,7 @@
     const state = {
       activeTab: 'crossview', // Default view is CrossView 3D
       eyeMode: 'crossview',   // 'crossview' (Cross-Eye) vs 'parallel'
+      originalBaseName: 'photo',
       sourceImgElement: null,
       depthCanvas: null,
       sourceDataUrl: null,
@@ -661,7 +662,8 @@
         if (!state.crossviewDataUrl) return;
         const a = document.createElement('a');
         a.href = state.crossviewDataUrl;
-        a.download = `3D_${state.eyeMode === 'parallel' ? 'Parallel' : 'CrossView'}_Stereogram.jpg`;
+        const baseName = state.originalBaseName || 'photo';
+        a.download = `${baseName}_crossview.jpg`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -1043,6 +1045,9 @@
     }
 
     async function handleImageFile(file) {
+      if (file && file.name) {
+        state.originalBaseName = file.name.replace(/\.[^/.]+$/, "");
+      }
       aiSpinner.style.display = 'flex';
       txtAiStatus.innerText = "Preparing photo...";
       txtAiSub.innerText = "Optimizing image resolution for mobile RAM";
