@@ -939,50 +939,9 @@
         depthNorm[i] = depthData[i * 4] / 255.0;
       }
 
-      // 1. Directional Occlusion Depth Erosion (Exact 1:1 port of desktop CUDA algorithm)
-      // Eliminates silhouette cutout lines by expanding background textures seamlessly into disocclusion gaps
-      const kRadius = Math.max(2, Math.min(10, Math.round(maxShift * 0.45)));
-      const erodedDepthLeft = new Float32Array(sw * sh);
-      const erodedDepthRight = new Float32Array(sw * sh);
-
-      for (let y = 0; y < sh; y++) {
-        const rowOffset = y * sw;
-
-        for (let x = 0; x < sw; x++) {
-          const idx = rowOffset + x;
-          const curD = depthNorm[idx];
-
-          // Edge gradient magnitude (detects steep depth boundary cliffs)
-          const xPrev = x > 0 ? x - 1 : 0;
-          const xNext = x < sw - 1 ? x + 1 : sw - 1;
-          const diffX = Math.abs(depthNorm[rowOffset + xNext] - depthNorm[rowOffset + xPrev]);
-          const edgeWeight = Math.min(1.0, diffX * 3.5);
-
-          // 1D Min-pooling for Left Eye (disocclusion is to the left of foreground)
-          let minDLeft = curD;
-          const xStartL = Math.max(0, x - kRadius);
-          for (let kx = xStartL; kx <= x; kx++) {
-            const kd = depthNorm[rowOffset + kx];
-            if (kd < minDLeft) minDLeft = kd;
-          }
-
-          // 1D Min-pooling for Right Eye (disocclusion is to the right of foreground)
-          let minDRight = curD;
-          const xEndR = Math.min(sw - 1, x + kRadius);
-          for (let kx = x; kx <= xEndR; kx++) {
-            const kd = depthNorm[rowOffset + kx];
-            if (kd < minDRight) minDRight = kd;
-          }
-
-          // Blend: maintain sharp depth on bodies, prioritize background at cliff edges
-          erodedDepthLeft[idx]  = curD * (1.0 - edgeWeight * 0.70) + minDLeft  * (edgeWeight * 0.70);
-          erodedDepthRight[idx] = curD * (1.0 - edgeWeight * 0.70) + minDRight * (edgeWeight * 0.70);
-        }
-      }
-
-      // 2. Backward Warping (Inverse Subpixel Mapping)
+      // 1. Backward Warping (Inverse Subpixel Mapping)
       // Every destination pixel (x, y) samples from the source image.
-      // 100% filled: ZERO disocclusion holes, ZERO black lines!
+      // Continuous depth mapping eliminates silhouette ghost lines and floating borders!
       for (let y = 0; y < sh; y++) {
         const rowOffset = y * sw;
 
@@ -990,9 +949,10 @@
           const idx = rowOffset + x;
           const taper = edgeTaper[x];
           const outIdx = idx * 4;
+          const d = depthNorm[idx];
 
           // Left Eye Sampling
-          const shiftLeft = (erodedDepthLeft[idx] - 0.5) * maxShift * taper;
+          const shiftLeft = (d - 0.5) * maxShift * taper;
           let sxLeft = x - shiftLeft;
           if (sxLeft < 0) sxLeft = 0;
           else if (sxLeft > sw - 1) sxLeft = sw - 1;
@@ -1009,7 +969,7 @@
           ld[outIdx + 3] = 255;
 
           // Right Eye Sampling
-          const shiftRight = (erodedDepthRight[idx] - 0.5) * maxShift * taper;
+          const shiftRight = (d - 0.5) * maxShift * taper;
           let sxRight = x + shiftRight;
           if (sxRight < 0) sxRight = 0;
           else if (sxRight > sw - 1) sxRight = sw - 1;
@@ -1050,27 +1010,33 @@
       state.crossviewDataUrl = crossviewCanvas.toDataURL('image/jpeg', 0.94);
     }
 
-    // --- Depth Estimation (WebGPU Snapdragon Model or Fallback) ---
+    // --- Depth Estimation (Ultra-Lightweight 26MB Mobile Model) ---
     let depthPipeline = null;
 
     async function initWebGpuPipeline() {
       if (depthPipeline) return depthPipeline;
-      try {
-        txtAiStatus.innerText = "Loading Depth Model onto Snapdragon GPU...";
-        const { pipeline, env } = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3');
-        env.backends.onnx.wasm.proxy = false;
+      const { pipeline, env } = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3');
+      env.backends.onnx.wasm.proxy = false;
 
+      try {
+        txtAiStatus.innerText = "Loading Light Mobile Model (26MB)...";
+        txtAiSub.innerText = "Initializing 4-bit quantized WebGPU weights";
+        // Load the 4-bit quantized model (model_q4.onnx = ~26MB, takes minimal RAM on phones)
         depthPipeline = await pipeline('depth-estimation', 'onnx-community/depth-anything-v2-small', {
           device: 'webgpu',
-          dtype: 'fp32'
+          dtype: 'q4'
         });
         state.hasModelLoaded = true;
         return depthPipeline;
       } catch (err) {
-        console.warn("WebGPU load fallback to wasm/cpu:", err);
-        // Fallback to CPU WASM if WebGPU flag isn't enabled
-        const { pipeline } = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3');
-        depthPipeline = await pipeline('depth-estimation', 'onnx-community/depth-anything-v2-small');
+        console.warn("WebGPU load fallback to wasm/cpu q4:", err);
+        txtAiStatus.innerText = "Loading Light Mobile Model (26MB WASM)...";
+        txtAiSub.innerText = "Running quantized CPU fallback";
+        // Fallback to CPU WASM with q4 (26MB) for lower-RAM phones without WebGPU
+        depthPipeline = await pipeline('depth-estimation', 'onnx-community/depth-anything-v2-small', {
+          device: 'wasm',
+          dtype: 'q4'
+        });
         state.hasModelLoaded = true;
         return depthPipeline;
       }
@@ -1079,7 +1045,7 @@
     async function handleImageFile(file) {
       aiSpinner.style.display = 'flex';
       txtAiStatus.innerText = "Preparing photo...";
-      txtAiSub.innerText = "Optimizing tensor size for mobile GPU";
+      txtAiSub.innerText = "Optimizing image resolution for mobile RAM";
 
       const reader = new FileReader();
       reader.onload = async (e) => {
@@ -1091,38 +1057,97 @@
           state.sourceImgElement = img;
 
           try {
-            txtAiStatus.innerText = "Running Depth Anything V2 on Adreno GPU...";
+            txtAiStatus.innerText = "Estimating depth on mobile...";
+            txtAiSub.innerText = "Running Depth Anything V2 Small (q4)";
             const pipe = await initWebGpuPipeline();
 
             const t0 = performance.now();
-            const out = await pipe(img.src);
+
+            // Downscale input for AI inference (max 518px) to prevent mobile out-of-memory crashes
+            const origW = img.naturalWidth || img.width;
+            const origH = img.naturalHeight || img.height;
+            const maxAiDim = 518;
+            let aiW = origW;
+            let aiH = origH;
+            if (aiW > maxAiDim || aiH > maxAiDim) {
+              if (aiW > aiH) {
+                aiH = Math.round((aiH * maxAiDim) / aiW);
+                aiW = maxAiDim;
+              } else {
+                aiW = Math.round((aiW * maxAiDim) / aiH);
+                aiH = maxAiDim;
+              }
+            }
+
+            const aiCanvas = document.createElement('canvas');
+            aiCanvas.width = aiW;
+            aiCanvas.height = aiH;
+            const aiCtx = aiCanvas.getContext('2d');
+            aiCtx.drawImage(img, 0, 0, aiW, aiH);
+
+            // Run inference with the compact quantized model
+            const out = await pipe(aiCanvas.toDataURL('image/jpeg', 0.85));
             const elapsed = Math.round(performance.now() - t0);
 
-            // Output depth map
+            // Extract and normalize depth map cleanly
             const depthRaw = out.depth;
-            const dCanvas = document.createElement('canvas');
-            dCanvas.width = depthRaw.width;
-            dCanvas.height = depthRaw.height;
-            const dCtx = dCanvas.getContext('2d');
-            const imgData = dCtx.createImageData(depthRaw.width, depthRaw.height);
+            let rawCanvas = null;
 
-            // Convert raw depth float/uint to grayscale RGBA
-            const rawData = depthRaw.data;
-            for (let i = 0; i < rawData.length; i++) {
-              const val = rawData[i];
-              imgData.data[i * 4] = val;
-              imgData.data[i * 4 + 1] = val;
-              imgData.data[i * 4 + 2] = val;
-              imgData.data[i * 4 + 3] = 255;
+            if (depthRaw && typeof depthRaw.toCanvas === 'function') {
+              try {
+                rawCanvas = depthRaw.toCanvas();
+              } catch (tcErr) {
+                console.warn("toCanvas failed, falling back to manual normalization:", tcErr);
+              }
             }
-            dCtx.putImageData(imgData, 0, 0);
 
-            state.depthCanvas = dCanvas;
-            state.depthDataUrl = dCanvas.toDataURL('image/png');
+            if (!rawCanvas) {
+              const dW = depthRaw.width || aiW;
+              const dH = depthRaw.height || aiH;
+              rawCanvas = document.createElement('canvas');
+              rawCanvas.width = dW;
+              rawCanvas.height = dH;
+              const dCtx = rawCanvas.getContext('2d');
+              const imgData = dCtx.createImageData(dW, dH);
+              const rawData = depthRaw.data;
+
+              // Find range to normalize properly (prevents noise and salt-and-pepper)
+              let minVal = Infinity;
+              let maxVal = -Infinity;
+              for (let i = 0; i < rawData.length; i++) {
+                const v = rawData[i];
+                if (v < minVal) minVal = v;
+                if (v > maxVal) maxVal = v;
+              }
+              const isByte = (minVal >= 0 && maxVal <= 255 && maxVal > 1.0);
+              const range = (maxVal - minVal) > 1e-5 ? (maxVal - minVal) : 1.0;
+
+              for (let i = 0; i < dW * dH; i++) {
+                const v = rawData[i];
+                const norm = isByte ? v : Math.round(((v - minVal) / range) * 255);
+                imgData.data[i * 4] = norm;
+                imgData.data[i * 4 + 1] = norm;
+                imgData.data[i * 4 + 2] = norm;
+                imgData.data[i * 4 + 3] = 255;
+              }
+              dCtx.putImageData(imgData, 0, 0);
+            }
+
+            // Scale depth canvas back up to match original photo resolution
+            const finalDepthCanvas = document.createElement('canvas');
+            finalDepthCanvas.width = origW;
+            finalDepthCanvas.height = origH;
+            const fCtx = finalDepthCanvas.getContext('2d');
+            fCtx.imageSmoothingEnabled = true;
+            fCtx.imageSmoothingQuality = 'high';
+            fCtx.drawImage(rawCanvas, 0, 0, origW, origH);
+
+            state.depthCanvas = finalDepthCanvas;
+            state.depthDataUrl = finalDepthCanvas.toDataURL('image/png');
             depthImg.src = state.depthDataUrl;
 
             // Generate CrossView Stereogram
-            generateCrossViewStereo(img, dCanvas);
+            generateCrossViewStereo(img, finalDepthCanvas);
 
             // Set CrossView as strictly default & active
             state.activeTab = 'crossview';
