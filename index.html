@@ -420,10 +420,32 @@
       transform: translateX(-50%) translateY(0);
       opacity: 1;
     }
+
+    /* Drag & Drop Visual Overlay */
+    .drop-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(10, 10, 18, 0.88);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      border: 3px dashed #a855f7;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
   </style>
 </head>
 
 <body>
+  <div id="dropOverlay" class="drop-overlay" style="display:none;">
+    <i class="fa-solid fa-cloud-arrow-up" style="font-size:3.2rem; color:#a855f7; margin-bottom:14px;"></i>
+    <div style="font-weight:700; font-size:1.15rem; color:#fff;">Drop photo here</div>
+    <div style="font-size:0.8rem; color:var(--text-muted); margin-top:4px;">Instantly creates 3D CrossView</div>
+  </div>
   <div class="glow-bg"></div>
   <div class="glow-bg-2"></div>
 
@@ -472,9 +494,9 @@
       <div class="empty-hero-icon">
         <i class="fa-solid fa-wand-magic-sparkles"></i>
       </div>
-      <h2 style="font-size:1.15rem; font-weight:700; margin-bottom:6px;">Select Any Photo</h2>
-      <p style="font-size:0.78rem; color:var(--text-muted); line-height:1.4; max-width:260px;">
-        Generates 3D Hologram & CrossView directly on your phone's Snapdragon GPU.
+      <h2 style="font-size:1.15rem; font-weight:700; margin-bottom:6px;">Select or Drop Any Photo</h2>
+      <p style="font-size:0.78rem; color:var(--text-muted); line-height:1.4; max-width:280px; margin-bottom:12px;">
+        Tap to pick, drag & drop an image, or press <b>Ctrl+V</b> to paste from clipboard.
       </p>
       <button class="btn-pick" id="btnPickPhoto">
         <i class="fa-solid fa-camera"></i> Pick or Snap Photo
@@ -611,6 +633,67 @@
     fileInput.addEventListener('change', (e) => {
       if (e.target.files && e.target.files[0]) {
         handleImageFile(e.target.files[0]);
+      }
+    });
+
+    // --- Drag & Drop Anywhere Support ---
+    const dropOverlay = document.getElementById('dropOverlay');
+
+    window.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+
+    window.addEventListener('dragenter', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (dropOverlay) dropOverlay.style.display = 'flex';
+    });
+
+    window.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.clientX <= 0 || e.clientY <= 0 || e.clientX >= window.innerWidth || e.clientY >= window.innerHeight) {
+        if (dropOverlay) dropOverlay.style.display = 'none';
+      }
+    });
+
+    window.addEventListener('drop', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (dropOverlay) dropOverlay.style.display = 'none';
+
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        const file = e.dataTransfer.files[0];
+        if (file.type && file.type.startsWith('image/')) {
+          handleImageFile(file);
+          showToast("📂 Image dropped! Processing 3D CrossView...");
+        } else {
+          showToast("Please drop an image file.");
+        }
+      }
+    });
+
+    // --- Clipboard Paste Support (Ctrl+V) ---
+    window.addEventListener('paste', (e) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.type && item.type.indexOf('image') !== -1) {
+          const blob = item.getAsFile();
+          if (blob) {
+            e.preventDefault();
+            const ext = blob.type.split('/')[1] || 'png';
+            const now = new Date();
+            const timeStr = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}`;
+            const file = new File([blob], `pasted_${timeStr}.${ext}`, { type: blob.type });
+            handleImageFile(file);
+            showToast("📋 Image pasted from clipboard!");
+            break;
+          }
+        }
       }
     });
 
